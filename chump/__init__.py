@@ -17,13 +17,13 @@ else: # Python 2
 	def bytes(s, encoding=None, errors=None):
 		return s.encode(encoding, errors)
 
+import requests
+from requests.exceptions import HTTPError
 try: # Python 3
-	from urllib.request import urlopen
 	from urllib.parse import urlencode
-	from urllib.error import HTTPError
 
 except ImportError: # Python 2
-	from urllib import urlopen, urlencode
+	from urllib import urlencode
 	
 	class HTTPError(Exception): pass
 
@@ -203,6 +203,7 @@ class Application(object):
 	"""
 	
 	def __init__(self, token):
+		self.session = requests.Session()
 		self.is_authenticated = False #: A :py:obj:`bool` indicating whether the application has been authenticated.
 		self.sounds = None #: If authenticated, a :py:class:`dict` of available notification sounds, otherwise :py:obj:`None`.
 		self.token = token #: A :py:obj:`string` of the application's API token.
@@ -210,7 +211,8 @@ class Application(object):
 		self.limit = None #: If a message has been sent, an :py:obj:`int` of the application's monthly message limit, otherwise :py:obj:`None`.
 		self.remaining = None #: If a message has been sent, an :py:obj:`int` of the application's remaining message allotment, otherwise :py:obj:`None`.
 		self.reset = None #: If a message has been sent, :py:class:`~datetime.datetime` of when the application's monthly message limit will reset, otherwise :py:obj:`None`.
-	
+		
+		
 	def __setattr__(self, name, value):
 		super(Application, self).__setattr__(name, value)
 		
@@ -317,28 +319,26 @@ class Application(object):
 				if data:
 					url += '?' + urlencode(data)
 				
-				response = urlopen(url)
+				response = self.session.get(url)
 			
 			elif method == 'post':
-				response = urlopen(url, bytes(urlencode(data), 'utf-8', 'strict') if data else None)
+				response = self.session.post(url, data)
 		
 		except HTTPError as e: # Python 3 on "error" status codes.
 			response = e
 			response.__dict__['headers'] = response.hdrs
 		
-		response.content = response.read().decode()
-		
 		logger.debug('Response ({code}):\n{headers}\n{content}'.format(
-			code=response.code,
+			code=response.status_code,
 			headers=response.headers,
 			content=response.content,
 		))
 		
-		if response.code == 200 or 400 <= response.code < 500:
-			response_json = json.loads(response.content)
+		if response.status_code == 200 or 400 <= response.status_code < 500:
+			response_json = response.json()
 			timestamp = http_date_to_datetime(response.headers['date'])
 			
-			if 400 <= response.code < 500:
+			if 400 <= response.status_code < 500:
 				raise APIError(url, data, response_json, timestamp)
 			
 			else:
@@ -582,7 +582,7 @@ class Message(object):
 		
 		elif name in ('message', 'title', 'url', 'url_title', 'device', 'callback', 'sound'):
 			if value is not None:
-				if not isinstance(value, basestring):
+				if not isinstance(value, str):
 					raise TypeError('Bad {name}: expected string, got {type}'.format(name=name, type=type(value)))
 				
 				elif name == 'message' and not (0 < len(value) <= 1024):
